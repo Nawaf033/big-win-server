@@ -206,7 +206,7 @@ async function updateSallaProduct(productId, { description, highlights, tags }) 
   }
 
   const response = await fetch(`https://api.salla.dev/store/v2/products/${productId}`, {
-    method: 'PUT',
+    method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.SALLA_ACCESS_TOKEN}`,
       'Content-Type': 'application/json',
