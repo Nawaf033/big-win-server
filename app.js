@@ -45,21 +45,29 @@ function extractImageUrl(value) {
   return null;
 }
 
-function supportsVision(model) {
-  const id = String(model?.id || '').toLowerCase();
-  if (!id.endsWith(':free')) return false;
+const EXCLUDED_MODEL_TERMS = ['safety', 'guard', 'moderation', 'embed', 'rerank'];
+const VISION_ID_HINTS = ['vision', 'vl', 'pixtral', 'llava', 'gemini', 'qwen2-vl'];
 
+function isExcludedModelId(id) {
+  return EXCLUDED_MODEL_TERMS.some((term) => id.includes(term));
+}
+
+function hasVisionCapability(model) {
+  const id = String(model?.id || '').toLowerCase();
   const inputModalities = model?.architecture?.input_modalities;
   const hasImageModality =
     Array.isArray(inputModalities) && inputModalities.includes('image');
 
-  const modality = String(model?.architecture?.modality || '').toLowerCase();
-  const modalityMentionsImage = modality.includes('image');
+  const idHint = VISION_ID_HINTS.some((hint) => id.includes(hint));
 
-  const idHint =
-    id.includes('vl') || id.includes('vision') || id.includes('gemini');
+  return hasImageModality || idHint;
+}
 
-  return hasImageModality || modalityMentionsImage || idHint;
+function isEligibleFreeVisionModel(model) {
+  const id = String(model?.id || '').toLowerCase();
+  if (!id.endsWith(':free')) return false;
+  if (isExcludedModelId(id)) return false;
+  return hasVisionCapability(model);
 }
 
 /**
@@ -84,7 +92,7 @@ async function resolveActiveFreeVisionModel() {
     const models = Array.isArray(payload?.data) ? payload.data : [];
 
     const freeVisionModels = models
-      .filter(supportsVision)
+      .filter(isEligibleFreeVisionModel)
       .sort((a, b) => {
         const aHasImage = Array.isArray(a.architecture?.input_modalities)
           ? Number(a.architecture.input_modalities.includes('image'))
@@ -123,6 +131,7 @@ async function generateArabicProductContent({ productName, productPrice, mainIma
 
   const selectedModel = await resolveActiveFreeVisionModel();
   console.log(`🤖 Selected OpenRouter model: ${selectedModel}`);
+  console.log('✍️ Generating Arabic product marketing text, highlights, and tags...');
 
   const safeName = productName || 'منتج بدون اسم';
   const safePrice = productPrice == null ? 'غير متوفر' : productPrice;
