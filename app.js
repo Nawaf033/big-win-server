@@ -1,30 +1,23 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const axios = require('axios');
-const { GoogleGenAI } = require('@google/genai');
+const OpenAI = require('openai');
 const env = require('./src/config/env');
 const apiRoutes = require('./src/routes/apiRoutes');
 
 const app = express();
-const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-function detectImageMimeType(contentType, imageUrl) {
-  if (contentType?.startsWith('image/')) {
-    return contentType.split(';')[0].trim();
-  }
+const openrouter = new OpenAI({
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY,
+  defaultHeaders: {
+    'HTTP-Referer': 'https://render.com',
+    'X-Title': 'BigWin',
+  },
+});
 
-  const extension = String(imageUrl).split('?')[0].split('.').pop()?.toLowerCase();
-  const mimeByExt = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    gif: 'image/gif',
-  };
-
-  return mimeByExt[extension] || 'image/jpeg';
-}
+const PRIMARY_MODEL = 'google/gemini-2.0-flash-exp:free';
+const FALLBACK_MODEL = 'meta-llama/llama-3.2-11b-vision-instruct:free';
 
 /**
  * Safely extract a string image URL from string | { url } | array payloads.
@@ -52,12 +45,29 @@ function extractImageUrl(value) {
   return null;
 }
 
+async function callVisionModel(model, { prompt, mainImageUrl }) {
+  const response = await openrouter.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: mainImageUrl } },
+        ],
+      },
+    ],
+  });
+
+  return response.choices?.[0]?.message?.content?.trim() || '';
+}
+
 /**
- * Analyze a Salla product image with Gemini 2.0 Flash and generate Arabic copy.
+ * Analyze a Salla product image via OpenRouter and generate Arabic copy.
  */
 async function generateArabicProductContent({ productName, productPrice, mainImageUrl }) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not configured');
+  if (!process.env.OPENROUTER_API_KEY) {
+    throw new Error('OPENROUTER_API_KEY is not configured');
   }
 
   if (!mainImageUrl || typeof mainImageUrl !== 'string') {
@@ -67,46 +77,26 @@ async function generateArabicProductContent({ productName, productPrice, mainIma
   const safeName = productName || 'منتج بدون اسم';
   const safePrice = productPrice == null ? 'غير متوفر' : productPrice;
 
-  const imageResponse = await axios.get(mainImageUrl, {
-    responseType: 'arraybuffer',
-    timeout: 30000,
-    maxRedirects: 5,
-  });
-
-  const mimeType = detectImageMimeType(imageResponse.headers['content-type'], mainImageUrl);
-  const imageBase64 = Buffer.from(imageResponse.data).toString('base64');
-
   const prompt = `أنت كاتب محتوى تجاري لمنصة سلة في السعودية (متجر Big Win).
 
 اسم المنتج: ${safeName}
 السعر: ${safePrice}
 
-حلّل صورة المنتج أعلاه، ثم أنشئ محتوى تسويقي جذاب بالعربية الفصحى السهلة.
+حلّل صورة المنتج المرفقة، ثم أنشئ محتوى تسويقي جذاب بالعربية الفصحى السهلة.
 
 أرجع JSON فقط بالمفاتيح التالية:
 - description: وصف منتج جذاب من 3 إلى 5 جمل
 - highlights: مصفوفة من 3 إلى 6 نقاط بيع رئيسية قصيرة
 - tags: مصفوفة من 5 إلى 10 وسوم/كلمات مفتاحية عربية مناسبة للمتجر الإلكتروني`;
 
-  const response = await gemini.models.generateContent({
-    model: 'gemini-2.0-flash',
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType,
-              data: imageBase64,
-            },
-          },
-        ],
-      },
-    ],
-  });
-
-  return response.text?.trim() || '';
+  try {
+    return await callVisionModel(PRIMARY_MODEL, { prompt, mainImageUrl });
+  } catch (primaryError) {
+    console.warn(
+      `⚠️ Primary model failed (${PRIMARY_MODEL}): ${primaryError.message}. Trying fallback...`
+    );
+    return await callVisionModel(FALLBACK_MODEL, { prompt, mainImageUrl });
+  }
 }
 
 // ==========================================
@@ -175,20 +165,20 @@ app.post('/webhook', (req, res) => {
   });
 
   if (!mainImageUrl || typeof mainImageUrl !== 'string') {
-    console.log('⏭️ Skipping Gemini analysis: no valid string image URL in webhook payload');
+    console.log('⏭️ Skipping AI analysis: no valid string image URL in webhook payload');
     return;
   }
 
   // Run AI enrichment after acknowledging Salla
   generateArabicProductContent({ productName, productPrice, mainImageUrl })
     .then((aiResponse) => {
-      console.log('✨ Gemini Product Content:');
+      console.log('✨ OpenRouter Product Content:');
       console.log('---------------------------');
       console.log(aiResponse);
       console.log('---------------------------');
     })
     .catch((error) => {
-      console.error('❌ Gemini analysis failed:', error.message);
+      console.error('❌ OpenRouter analysis failed:', error.message);
     });
 });
 
