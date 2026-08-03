@@ -57,3 +57,6 @@ app.listen(env.port, () => {
 });
 
 module.exports = app;
+app.get('/', (req, res) => {
+  res.status(200).send('Big Win Server is Live!');
+});
