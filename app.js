@@ -27,12 +27,45 @@ function detectImageMimeType(contentType, imageUrl) {
 }
 
 /**
+ * Safely extract a string image URL from string | { url } | array payloads.
+ */
+function extractImageUrl(value) {
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.startsWith('http') ? trimmed : null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const url = extractImageUrl(item);
+      if (url) return url;
+    }
+    return null;
+  }
+
+  if (typeof value === 'object') {
+    return extractImageUrl(value.url ?? value.src ?? value.original ?? null);
+  }
+
+  return null;
+}
+
+/**
  * Analyze a Salla product image with Gemini 2.5 Flash and generate Arabic copy.
  */
-async function generateArabicProductContent({ productName, mainImageUrl }) {
+async function generateArabicProductContent({ productName, productPrice, mainImageUrl }) {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is not configured');
   }
+
+  if (!mainImageUrl || typeof mainImageUrl !== 'string') {
+    throw new Error('mainImageUrl must be a valid string URL');
+  }
+
+  const safeName = productName || 'منتج بدون اسم';
+  const safePrice = productPrice == null ? 'غير متوفر' : productPrice;
 
   const imageResponse = await axios.get(mainImageUrl, {
     responseType: 'arraybuffer',
@@ -45,7 +78,8 @@ async function generateArabicProductContent({ productName, mainImageUrl }) {
 
   const prompt = `أنت كاتب محتوى تجاري لمنصة سلة في السعودية (متجر Big Win).
 
-اسم المنتج: ${productName || 'منتج بدون اسم'}
+اسم المنتج: ${safeName}
+السعر: ${safePrice}
 
 حلّل صورة المنتج أعلاه، ثم أنشئ محتوى تسويقي جذاب بالعربية الفصحى السهلة.
 
@@ -109,21 +143,28 @@ app.post('/webhook', (req, res) => {
 
   const data = req.body?.data || {};
   const productId = data.id ?? data.product_id ?? null;
-  const productName = data.name ?? data.product_name ?? null;
-  const productPrice =
+  const productName = data.name ?? data.product_name ?? 'منتج بدون اسم';
+  const rawPrice =
     data.price?.amount ??
     data.price?.value ??
     data.price ??
     data.regular_price?.amount ??
     data.regular_price ??
     null;
-  const mainImageUrl =
+  const productPrice =
+    rawPrice == null || (typeof rawPrice === 'object' && rawPrice.amount == null)
+      ? 'غير متوفر'
+      : typeof rawPrice === 'object'
+        ? rawPrice.amount ?? rawPrice.value ?? 'غير متوفر'
+        : rawPrice;
+
+  const mainImageUrl = extractImageUrl(
     data.main_image ??
-    data.main_image_url ??
-    data.image?.url ??
-    data.images?.[0]?.url ??
-    data.images?.[0] ??
-    null;
+      data.main_image_url ??
+      data.image ??
+      data.images ??
+      null
+  );
 
   console.log('📦 Salla Webhook Received:', {
     event: req.body?.event,
@@ -133,13 +174,13 @@ app.post('/webhook', (req, res) => {
     mainImageUrl,
   });
 
-  if (!mainImageUrl) {
-    console.log('⏭️ Skipping Gemini analysis: no mainImageUrl in webhook payload');
+  if (!mainImageUrl || typeof mainImageUrl !== 'string') {
+    console.log('⏭️ Skipping Gemini analysis: no valid string image URL in webhook payload');
     return;
   }
 
   // Run AI enrichment after acknowledging Salla
-  generateArabicProductContent({ productName, mainImageUrl })
+  generateArabicProductContent({ productName, productPrice, mainImageUrl })
     .then((aiResponse) => {
       console.log('✨ Gemini Product Content:');
       console.log('---------------------------');
