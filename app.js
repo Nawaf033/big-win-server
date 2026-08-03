@@ -16,8 +16,11 @@ const openrouter = new OpenAI({
   },
 });
 
-const PRIMARY_MODEL = 'qwen/qwen-2-vl-72b-instruct:free';
-const FALLBACK_MODEL = 'google/gemini-2.0-flash-lite-preview-02-05:free';
+const VISION_MODELS = [
+  'qwen/qwen2-vl-72b-instruct:free',
+  'google/gemini-2.0-flash-thinking-exp:free',
+  'mistralai/pixtral-12b:free',
+];
 
 /**
  * Safely extract a string image URL from string | { url } | array payloads.
@@ -43,23 +46,6 @@ function extractImageUrl(value) {
   }
 
   return null;
-}
-
-async function callVisionModel(model, { prompt, mainImageUrl }) {
-  const response = await openrouter.chat.completions.create({
-    model,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: mainImageUrl } },
-        ],
-      },
-    ],
-  });
-
-  return response.choices?.[0]?.message?.content?.trim() || '';
 }
 
 /**
@@ -89,14 +75,21 @@ async function generateArabicProductContent({ productName, productPrice, mainIma
 - highlights: مصفوفة من 3 إلى 6 نقاط بيع رئيسية قصيرة
 - tags: مصفوفة من 5 إلى 10 وسوم/كلمات مفتاحية عربية مناسبة للمتجر الإلكتروني`;
 
-  try {
-    return await callVisionModel(PRIMARY_MODEL, { prompt, mainImageUrl });
-  } catch (primaryError) {
-    console.warn(
-      `⚠️ Primary model failed (${PRIMARY_MODEL}): ${primaryError.message}. Trying fallback...`
-    );
-    return await callVisionModel(FALLBACK_MODEL, { prompt, mainImageUrl });
-  }
+  const response = await openrouter.chat.completions.create({
+    model: VISION_MODELS[0],
+    models: VISION_MODELS,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: mainImageUrl } },
+        ],
+      },
+    ],
+  });
+
+  return response.choices?.[0]?.message?.content?.trim() || '';
 }
 
 // ==========================================
