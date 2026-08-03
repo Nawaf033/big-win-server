@@ -117,6 +117,118 @@ async function resolveActiveFreeVisionModel() {
   }
 }
 
+function extractJsonObject(text) {
+  if (!text || typeof text !== 'string') return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) {
+      try {
+        return JSON.parse(fenced[1].trim());
+      } catch {
+        // fall through
+      }
+    }
+
+    const objectMatch = text.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0]);
+      } catch {
+        // fall through
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseAiProductContent(rawText) {
+  const parsed = extractJsonObject(rawText);
+
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      description: String(rawText || '').trim(),
+      highlights: [],
+      tags: [],
+    };
+  }
+
+  return {
+    description: String(parsed.description || '').trim(),
+    highlights: Array.isArray(parsed.highlights)
+      ? parsed.highlights.map((item) => String(item).trim()).filter(Boolean)
+      : [],
+    tags: Array.isArray(parsed.tags)
+      ? parsed.tags.map((item) => String(item).trim()).filter(Boolean)
+      : [],
+  };
+}
+
+function formatSallaDescription({ description, highlights }) {
+  const paragraphs = String(description || '')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `<p>${line}</p>`)
+    .join('');
+
+  const highlightsHtml =
+    Array.isArray(highlights) && highlights.length > 0
+      ? `<h3>أبرز المميزات</h3><ul>${highlights
+          .map((item) => `<li>${item}</li>`)
+          .join('')}</ul>`
+      : '';
+
+  return `${paragraphs}${highlightsHtml}`.trim();
+}
+
+/**
+ * Update a Salla product with AI-generated description and tags.
+ */
+async function updateSallaProduct(productId, { description, highlights, tags }) {
+  if (!productId) {
+    throw new Error('productId is required to update Salla product');
+  }
+
+  if (!process.env.SALLA_ACCESS_TOKEN) {
+    throw new Error('SALLA_ACCESS_TOKEN is not configured');
+  }
+
+  const body = {
+    description: formatSallaDescription({ description, highlights }),
+  };
+
+  if (Array.isArray(tags) && tags.length > 0) {
+    body.tags = tags;
+  }
+
+  const response = await fetch(`https://api.salla.dev/store/v2/products/${productId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${process.env.SALLA_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message =
+      payload?.error?.message ||
+      payload?.message ||
+      `Salla API returned ${response.status}`;
+    throw new Error(message);
+  }
+
+  console.log(`✅ Product ${productId} updated successfully in Salla store!`);
+  return payload;
+}
+
 /**
  * Analyze a Salla product image via OpenRouter and generate Arabic copy.
  */
@@ -161,7 +273,11 @@ async function generateArabicProductContent({ productName, productPrice, mainIma
     ],
   });
 
-  return response.choices?.[0]?.message?.content?.trim() || '';
+  const rawText = response.choices?.[0]?.message?.content?.trim() || '';
+  return {
+    rawText,
+    ...parseAiProductContent(rawText),
+  };
 }
 
 // ==========================================
@@ -234,13 +350,28 @@ app.post('/webhook', (req, res) => {
     return;
   }
 
-  // Run AI enrichment after acknowledging Salla
+  // Run AI enrichment after acknowledging Salla, then sync back to the store
   generateArabicProductContent({ productName, productPrice, mainImageUrl })
-    .then((aiResponse) => {
+    .then(async (aiResponse) => {
       console.log('✨ OpenRouter Product Content:');
       console.log('---------------------------');
-      console.log(aiResponse);
+      console.log(aiResponse.rawText);
       console.log('---------------------------');
+
+      if (!productId) {
+        console.warn('⚠️ Skipping Salla product update: missing productId');
+        return;
+      }
+
+      try {
+        await updateSallaProduct(productId, {
+          description: aiResponse.description,
+          highlights: aiResponse.highlights,
+          tags: aiResponse.tags,
+        });
+      } catch (sallaError) {
+        console.error(`❌ Salla product update failed for ${productId}:`, sallaError.message);
+      }
     })
     .catch((error) => {
       console.error('❌ OpenRouter analysis failed:', error.message);
