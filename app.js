@@ -53,7 +53,7 @@ function extractImageUrl(value) {
 }
 
 /**
- * Analyze a Salla product image with Gemini 2.5 Flash and generate Arabic copy.
+ * Analyze a Salla product image with Gemini 1.5 Flash and generate Arabic copy.
  */
 async function generateArabicProductContent({ productName, productPrice, mainImageUrl }) {
   if (!process.env.GEMINI_API_KEY) {
@@ -89,7 +89,7 @@ async function generateArabicProductContent({ productName, productPrice, mainIma
 - tags: مصفوفة من 5 إلى 10 وسوم/كلمات مفتاحية عربية مناسبة للمتجر الإلكتروني`;
 
   const response = await gemini.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-1.5-flash',
     contents: [
       {
         role: 'user',
