@@ -1,10 +1,79 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const axios = require('axios');
+const { GoogleGenAI } = require('@google/genai');
 const env = require('./src/config/env');
 const apiRoutes = require('./src/routes/apiRoutes');
 
 const app = express();
+const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+function detectImageMimeType(contentType, imageUrl) {
+  if (contentType?.startsWith('image/')) {
+    return contentType.split(';')[0].trim();
+  }
+
+  const extension = String(imageUrl).split('?')[0].split('.').pop()?.toLowerCase();
+  const mimeByExt = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+  };
+
+  return mimeByExt[extension] || 'image/jpeg';
+}
+
+/**
+ * Analyze a Salla product image with Gemini 2.5 Flash and generate Arabic copy.
+ */
+async function generateArabicProductContent({ productName, mainImageUrl }) {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not configured');
+  }
+
+  const imageResponse = await axios.get(mainImageUrl, {
+    responseType: 'arraybuffer',
+    timeout: 30000,
+    maxRedirects: 5,
+  });
+
+  const mimeType = detectImageMimeType(imageResponse.headers['content-type'], mainImageUrl);
+  const imageBase64 = Buffer.from(imageResponse.data).toString('base64');
+
+  const prompt = `أنت كاتب محتوى تجاري لمنصة سلة في السعودية (متجر Big Win).
+
+اسم المنتج: ${productName || 'منتج بدون اسم'}
+
+حلّل صورة المنتج أعلاه، ثم أنشئ محتوى تسويقي جذاب بالعربية الفصحى السهلة.
+
+أرجع JSON فقط بالمفاتيح التالية:
+- description: وصف منتج جذاب من 3 إلى 5 جمل
+- highlights: مصفوفة من 3 إلى 6 نقاط بيع رئيسية قصيرة
+- tags: مصفوفة من 5 إلى 10 وسوم/كلمات مفتاحية عربية مناسبة للمتجر الإلكتروني`;
+
+  const response = await gemini.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: prompt },
+          {
+            inlineData: {
+              mimeType,
+              data: imageBase64,
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  return response.text?.trim() || '';
+}
 
 // ==========================================
 // 1️⃣ Middlewares (إعدادات معالجة البيانات)
@@ -63,6 +132,23 @@ app.post('/webhook', (req, res) => {
     productPrice,
     mainImageUrl,
   });
+
+  if (!mainImageUrl) {
+    console.log('⏭️ Skipping Gemini analysis: no mainImageUrl in webhook payload');
+    return;
+  }
+
+  // Run AI enrichment after acknowledging Salla
+  generateArabicProductContent({ productName, mainImageUrl })
+    .then((aiResponse) => {
+      console.log('✨ Gemini Product Content:');
+      console.log('---------------------------');
+      console.log(aiResponse);
+      console.log('---------------------------');
+    })
+    .catch((error) => {
+      console.error('❌ Gemini analysis failed:', error.message);
+    });
 });
 
 // مسارات API الأخرى
