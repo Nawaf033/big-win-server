@@ -1,0 +1,26 @@
+{
+  "name": "big-win-backend",
+  "version": "1.0.0",
+  "description": "Production backend for Big Win dropshipping application",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "dropshipping",
+    "salla",
+    "express"
+  ],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
