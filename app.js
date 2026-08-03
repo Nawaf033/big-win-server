@@ -6,6 +6,9 @@ const apiRoutes = require('./src/routes/apiRoutes');
 
 const app = express();
 
+// ==========================================
+// 1️⃣ Middlewares (إعدادات معالجة البيانات)
+// ==========================================
 app.use(cors());
 app.use(
   bodyParser.json({
@@ -17,6 +20,11 @@ app.use(
 );
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
+// ==========================================
+// 2️⃣ Primary Routes (المسارات الأساسية)
+// ==========================================
+
+// فحص حالة السيرفر (Health Check)
 app.get('/', (_req, res) => {
   res.json({
     success: true,
@@ -25,8 +33,20 @@ app.get('/', (_req, res) => {
   });
 });
 
+// مسار استقبال إشعارات سلة (Salla Webhook)
+app.post('/webhook', (req, res) => {
+  console.log('📦 Salla Webhook Received:', JSON.stringify(req.body, null, 2));
+  res.status(200).send('Webhook Received Successfully');
+});
+
+// مسارات API الأخرى
 app.use('/api/v1', apiRoutes);
 
+// ==========================================
+// 3️⃣ Error & 404 Handlers (معالجة الأخطاء)
+// ==========================================
+
+// معالج الصفحات غير الموجودة (يوضع بعد كل المسارات)
 app.use((_req, res) => {
   res.status(404).json({
     success: false,
@@ -34,17 +54,10 @@ app.use((_req, res) => {
   });
 });
 
-// eslint-disable-next-line no-unused-vars
+// معالج الأخطاء العام
 app.use((err, _req, res, _next) => {
   const status = err.status || 500;
-  const message = err.message || 'Internal server error';
-
-  if (env.nodeEnv !== 'production') {
-    console.error(err);
-  } else {
-    console.error(`[error] ${status}: ${message}`);
-  }
-
+  const message = err.message || 'Internal Server Error';
   res.status(status).json({
     success: false,
     error: message,
@@ -52,11 +65,11 @@ app.use((err, _req, res, _next) => {
   });
 });
 
+// ==========================================
+// 4️⃣ Start Server (تشغيل السيرفر)
+// ==========================================
 app.listen(env.port, () => {
   console.log(`Big Win backend listening on port ${env.port}`);
 });
 
 module.exports = app;
-app.get('/', (req, res) => {
-  res.status(200).send('Big Win Server is Live!');
-});
