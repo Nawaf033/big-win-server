@@ -185,15 +185,118 @@ function formatSallaDescription({ description, highlights }) {
   return `${paragraphs}${highlightsHtml}`.trim();
 }
 
+const SALLA_TOKEN_URL = 'https://accounts.salla.sa/oauth2/token';
+
+/** In-memory Salla OAuth tokens (updated after refresh). */
+const sallaAuth = {
+  accessToken: process.env.SALLA_ACCESS_TOKEN || null,
+  refreshToken: process.env.SALLA_REFRESH_TOKEN || null,
+};
+
+function getSallaAccessToken() {
+  return sallaAuth.accessToken || process.env.SALLA_ACCESS_TOKEN || null;
+}
+
+function isInvalidTokenError(status, payload) {
+  if (status === 401) return true;
+
+  const message = String(
+    payload?.error?.message ||
+      payload?.error_description ||
+      payload?.error ||
+      payload?.message ||
+      ''
+  ).toLowerCase();
+
+  return (
+    message.includes('invalid token') ||
+    message.includes('unauthenticated') ||
+    message.includes('unauthorized') ||
+    message.includes('access token')
+  );
+}
+
+/**
+ * Refresh the Salla access token using the stored refresh token.
+ */
+async function refreshSallaAccessToken() {
+  const clientId = process.env.SALLA_CLIENT_ID;
+  const clientSecret = process.env.SALLA_CLIENT_SECRET;
+  const refreshToken = sallaAuth.refreshToken || process.env.SALLA_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(
+      'SALLA_CLIENT_ID, SALLA_CLIENT_SECRET, and SALLA_REFRESH_TOKEN are required to refresh the access token'
+    );
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: clientId,
+    client_secret: clientSecret,
+    refresh_token: refreshToken,
+  });
+
+  const response = await fetch(SALLA_TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok || !payload.access_token) {
+    const message =
+      payload?.error_description ||
+      payload?.error?.message ||
+      payload?.error ||
+      payload?.message ||
+      `Salla token refresh failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  sallaAuth.accessToken = payload.access_token;
+  process.env.SALLA_ACCESS_TOKEN = payload.access_token;
+
+  // Salla refresh tokens are single-use; keep the newest one in memory.
+  if (payload.refresh_token) {
+    sallaAuth.refreshToken = payload.refresh_token;
+    process.env.SALLA_REFRESH_TOKEN = payload.refresh_token;
+  }
+
+  console.log('🔄 Salla Access Token refreshed successfully!');
+  return sallaAuth.accessToken;
+}
+
+async function sendSallaProductUpdate(productId, body, accessToken) {
+  const response = await fetch(`https://api.salla.dev/admin/v2/products/${productId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  return { response, payload };
+}
+
 /**
  * Update a Salla product with AI-generated description and tags.
+ * Automatically refreshes the OAuth access token and retries once on 401.
  */
 async function updateSallaProduct(productId, { description, highlights, tags }) {
   if (!productId) {
     throw new Error('productId is required to update Salla product');
   }
 
-  if (!process.env.SALLA_ACCESS_TOKEN) {
+  let accessToken = getSallaAccessToken();
+  if (!accessToken) {
     throw new Error('SALLA_ACCESS_TOKEN is not configured');
   }
 
@@ -205,17 +308,13 @@ async function updateSallaProduct(productId, { description, highlights, tags }) 
     body.tags = tags;
   }
 
-  const response = await fetch(`https://api.salla.dev/admin/v2/products/${productId}`, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${process.env.SALLA_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let { response, payload } = await sendSallaProductUpdate(productId, body, accessToken);
 
-  const payload = await response.json().catch(() => ({}));
+  if (isInvalidTokenError(response.status, payload)) {
+    console.warn('⚠️ Salla access token invalid/expired. Refreshing...');
+    accessToken = await refreshSallaAccessToken();
+    ({ response, payload } = await sendSallaProductUpdate(productId, body, accessToken));
+  }
 
   if (!response.ok) {
     const message =
