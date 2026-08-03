@@ -16,11 +16,8 @@ const openrouter = new OpenAI({
   },
 });
 
-const VISION_MODELS = [
-  'qwen/qwen2-vl-72b-instruct:free',
-  'google/gemini-2.0-flash-thinking-exp:free',
-  'mistralai/pixtral-12b:free',
-];
+const FALLBACK_VISION_MODEL = 'google/gemini-2.0-flash-lite-preview-02-05:free';
+const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 
 /**
  * Safely extract a string image URL from string | { url } | array payloads.
@@ -48,6 +45,70 @@ function extractImageUrl(value) {
   return null;
 }
 
+function supportsVision(model) {
+  const id = String(model?.id || '').toLowerCase();
+  if (!id.endsWith(':free')) return false;
+
+  const inputModalities = model?.architecture?.input_modalities;
+  const hasImageModality =
+    Array.isArray(inputModalities) && inputModalities.includes('image');
+
+  const modality = String(model?.architecture?.modality || '').toLowerCase();
+  const modalityMentionsImage = modality.includes('image');
+
+  const idHint =
+    id.includes('vl') || id.includes('vision') || id.includes('gemini');
+
+  return hasImageModality || modalityMentionsImage || idHint;
+}
+
+/**
+ * Pick the first active free vision model from OpenRouter.
+ */
+async function resolveActiveFreeVisionModel() {
+  try {
+    const response = await fetch(OPENROUTER_MODELS_URL, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://render.com',
+        'X-Title': 'BigWin',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter models API returned ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const models = Array.isArray(payload?.data) ? payload.data : [];
+
+    const freeVisionModels = models
+      .filter(supportsVision)
+      .sort((a, b) => {
+        const aHasImage = Array.isArray(a.architecture?.input_modalities)
+          ? Number(a.architecture.input_modalities.includes('image'))
+          : 0;
+        const bHasImage = Array.isArray(b.architecture?.input_modalities)
+          ? Number(b.architecture.input_modalities.includes('image'))
+          : 0;
+        return bHasImage - aHasImage;
+      });
+
+    const selected = freeVisionModels[0]?.id;
+    if (!selected) {
+      throw new Error('No active free vision models found');
+    }
+
+    return selected;
+  } catch (error) {
+    console.warn(
+      `⚠️ Failed to resolve dynamic OpenRouter model (${error.message}). Using fallback.`
+    );
+    return FALLBACK_VISION_MODEL;
+  }
+}
+
 /**
  * Analyze a Salla product image via OpenRouter and generate Arabic copy.
  */
@@ -59,6 +120,9 @@ async function generateArabicProductContent({ productName, productPrice, mainIma
   if (!mainImageUrl || typeof mainImageUrl !== 'string') {
     throw new Error('mainImageUrl must be a valid string URL');
   }
+
+  const selectedModel = await resolveActiveFreeVisionModel();
+  console.log(`🤖 Selected OpenRouter model: ${selectedModel}`);
 
   const safeName = productName || 'منتج بدون اسم';
   const safePrice = productPrice == null ? 'غير متوفر' : productPrice;
@@ -76,8 +140,7 @@ async function generateArabicProductContent({ productName, productPrice, mainIma
 - tags: مصفوفة من 5 إلى 10 وسوم/كلمات مفتاحية عربية مناسبة للمتجر الإلكتروني`;
 
   const response = await openrouter.chat.completions.create({
-    model: VISION_MODELS[0],
-    models: VISION_MODELS,
+    model: selectedModel,
     messages: [
       {
         role: 'user',
