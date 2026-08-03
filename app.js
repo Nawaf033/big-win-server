@@ -35,8 +35,34 @@ app.get('/', (_req, res) => {
 
 // مسار استقبال إشعارات سلة (Salla Webhook)
 app.post('/webhook', (req, res) => {
-  console.log('📦 Salla Webhook Received:', JSON.stringify(req.body, null, 2));
-  res.status(200).send('Webhook Received Successfully');
+  // Acknowledge Salla immediately so the webhook does not time out
+  res.status(200).json({ success: true, message: 'Webhook acknowledged' });
+
+  const data = req.body?.data || {};
+  const productId = data.id ?? data.product_id ?? null;
+  const productName = data.name ?? data.product_name ?? null;
+  const productPrice =
+    data.price?.amount ??
+    data.price?.value ??
+    data.price ??
+    data.regular_price?.amount ??
+    data.regular_price ??
+    null;
+  const mainImageUrl =
+    data.main_image ??
+    data.main_image_url ??
+    data.image?.url ??
+    data.images?.[0]?.url ??
+    data.images?.[0] ??
+    null;
+
+  console.log('📦 Salla Webhook Received:', {
+    event: req.body?.event,
+    productId,
+    productName,
+    productPrice,
+    mainImageUrl,
+  });
 });
 
 // مسارات API الأخرى
