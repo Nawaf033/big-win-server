@@ -511,3 +511,12 @@ app.listen(env.port, () => {
 });
 
 module.exports = app;
+app.post('/salla/webhook', (req, res) => {
+  // طباعة محتوى الإشعار كاملاً لظهور التوكن في سجلات Render
+  console.log("=== SALLA WEBHOOK PAYLOAD ===");
+  console.log(JSON.stringify(req.body, null, 2));
+  console.log("=============================");
+
+  // إرجاع استجابة نجاح لسلة
+  res.status(200).send('OK');
+});
